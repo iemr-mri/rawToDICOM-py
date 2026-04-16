@@ -1,0 +1,24 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -m pytest tests/test_dicom.py -v)",
+      "Bash(python -c ' *)",
+      "Bash(python -m pytest tests/test_dicom.py -q)",
+      "Bash(grep -E '^[0-9]+$')",
+      "Bash(python -m pytest tests/test_pipeline_integration.py -v -m \"not slow\")",
+      "Bash(python -m pytest tests/test_pipeline_integration.py -v -m slow)",
+      "Bash(python -m pytest -m \"not slow\" --tb=short -q)",
+      "Bash(python -m pytest tests/test_pipeline_integration.py -m slow -x -v)",
+      "Bash(python -m pytest tests/test_pipeline_integration.py -m slow -v)",
+      "Bash(python -m pytest --ignore=tests/test_pipeline_integration.py -q)",
+      "Bash(python -m rawtoDICOM --help)",
+      "Bash(cat pyproject.toml)",
+      "Bash(cat setup.py)",
+      "Bash(python -m rawtoDICOM full --raw-root tests/raw-data/cohort1 --sorted-root tests/sorted-data --dicom-root tests/DICOM-data --project AGORA --cohort cohort1)",
+      "Bash(python -m rawtoDICOM full --raw-root tests/raw-data/cohort1 --sorted-root tests/sorted-data --dicom-root tests/DICOM-data --project AGORA --cohort cohort1 --skip-sort)",
+      "Bash(python -m pytest --co -q)",
+      "Bash(python -m pytest -q --tb=short)",
+      "Bash(python -m ruff check src/rawtoDICOM/cli.py)"
+    ]
+  }
+}

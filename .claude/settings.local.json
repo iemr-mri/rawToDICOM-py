@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(grep -n 'ACQ_ScanPipeJobSettings\\\\|ACQ_jobs\\\\b\\\\|ACQ_jobs_size\\\\|BYTORDA\\\\|AQ_mod\\\\|GO_raw_data_format\\\\|GO_block_size\\\\|GO_data_save\\\\|NI=\\\\|##$NR=' 'c:/Users/heskalde/Claude projects/rawToDICOM-py/tests/raw-data/cohort1/AGORA2_F1_s_2025121703_1_4_20251217_103442/1/acqp')",
+      "Bash(grep -E '^##\\\\$AQ_mod|^##\\\\$GO_block_size|^##\\\\$GO_data_save|^##\\\\$GO_raw_data_format|^##\\\\$NI=|^##\\\\$NR=')",
+      "Bash(pip install *)",
+      "Bash(python -m mypy src/)",
+      "Bash(python -m pytest tests/test_reader.py tests/test_scan.py -v)",
+      "Bash(python -m ruff check .)",
+      "Bash(python -m ruff check . --fix)",
+      "Bash(python -m pytest tests/test_reader.py tests/test_scan.py -v --tb=short)",
+      "Bash(mypy src/)",
+      "Bash(python -m pytest)"
+    ]
+  }
+}
