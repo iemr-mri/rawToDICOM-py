@@ -47,6 +47,8 @@ def process_sg_scan(
     output_dir: Path,
     *,
     species: str = "rat",
+    scan_label: str = "slice",
+    scan_index: int | None = None,
     shuffle_config: ShuffleConfig = ShuffleConfig(),
     force_dicom: bool = False,
 ) -> list[Path]:
@@ -59,6 +61,8 @@ def process_sg_scan(
         output_dir:     Destination directory for DICOM files.
         species:        ``"rat"`` or ``"mouse"`` — sets physiological frequency
                         bands used by ``clean_curves``.
+        scan_label:     Prefix for output filenames, e.g. ``"SAX1"`` → ``SAX1_slice_001.dcm``.
+        scan_index:     Passed to ``write_dicom_series`` to override the per-file slice number.
         shuffle_config: Cardiac binning parameters (default ShuffleConfig()).
         force_dicom:    When True, existing DICOM files are overwritten.
 
@@ -67,8 +71,15 @@ def process_sg_scan(
     """
     output_dir = Path(output_dir)
 
-    if not force_dicom and output_dir.exists() and any(output_dir.glob("*.dcm")):
-        return sorted(output_dir.glob("*.dcm"))
+    if not force_dicom and output_dir.exists():
+        pattern = (
+            f"{scan_label}_slice_{scan_index:03d}.dcm"
+            if scan_index is not None
+            else f"{scan_label}_*.dcm"
+        )
+        existing = sorted(output_dir.glob(pattern))
+        if existing:
+            return existing
 
     scan = load_scan(scan_dir)
 
@@ -118,4 +129,6 @@ def process_sg_scan(
         images = synchronize_slices(images)
 
     # --- Step 12: write DICOM -------------------------------------------------
-    return write_dicom_series(images, scan, output_dir)
+    return write_dicom_series(
+        images, scan, output_dir, scan_label=scan_label, scan_index=scan_index
+    )

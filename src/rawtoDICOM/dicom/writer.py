@@ -27,6 +27,8 @@ def write_dicom_series(
     scan: BrukerScan,
     output_dir: Path,
     heart_rate: float | None = None,
+    scan_label: str = "slice",
+    scan_index: int | None = None,
 ) -> list[Path]:
     """Apply geometry corrections and write one DICOM file per slice.
 
@@ -43,6 +45,10 @@ def write_dicom_series(
         scan:        BrukerScan supplying method, acqp, and visu_pars metadata.
         output_dir:  Directory where .dcm files are written (created if absent).
         heart_rate:  Heart rate in bpm.  When None, estimated from ACQ_repetition_time.
+        scan_label:  Prefix for output filenames, e.g. ``"LAX4"`` → ``LAX4_slice_001.dcm``.
+        scan_index:  When set, overrides the per-file ``slice_idx`` with a fixed number.
+                     Used for SAX stacks where each call writes one slice and the caller
+                     tracks the slice position across scans (e.g. ``SAX_slice_003.dcm``).
 
     Returns:
         List of written file paths, one per slice.
@@ -92,7 +98,11 @@ def write_dicom_series(
         orientation = raw_orientations[min(slice_idx, len(raw_orientations) - 1), :6].tolist()
         slice_loc = float(slice_offsets[min(slice_idx, len(slice_offsets) - 1)])
 
-        file_stem = f"slice_{slice_idx + 1:03d}" if n_slices > 1 else "slice_001"
+        slice_number = scan_index if scan_index is not None else slice_idx + 1
+        if n_slices == 1 and scan_index is None:
+            file_stem = scan_label
+        else:
+            file_stem = f"{scan_label}_slice_{slice_number:02d}"
         out_path = output_dir / f"{file_stem}.dcm"
 
         ds = _build_dataset(

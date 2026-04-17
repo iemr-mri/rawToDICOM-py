@@ -20,10 +20,19 @@ from pathlib import Path
 from rawtoDICOM.bruker.params import parse_bruker_params
 from rawtoDICOM.config import PipelineConfig
 
-# Keywords used to categorise scan directories.  A scan is placed into the
-# first matching keyword folder (case-insensitive substring search on the
-# ACQ_scan_name value).
-_KEYWORDS: list[str] = ["CINE", "FLASH", "TPM", "t1", "MRE", "LGE", "tagged"]
+# Maps match pattern (case-insensitive substring of ACQ_scan_name) → destination
+# folder name under sorted_root.  The first matching pattern wins.
+# "segFLASH_CS" is listed before "FLASH" so it takes priority over the shorter match.
+_KEYWORD_FOLDER: dict[str, str] = {
+    "segFLASH_CS": "CINE",
+    "CINE": "CINE",
+    "FLASH": "FLASH",
+    "TPM": "TPM",
+    "t1": "t1",
+    "MRE": "MRE",
+    "LGE": "LGE",
+    "tagged": "tagged",
+}
 
 
 def sort_raw_data(config: PipelineConfig) -> dict[str, list[Path]]:
@@ -42,13 +51,15 @@ def sort_raw_data(config: PipelineConfig) -> dict[str, list[Path]]:
     Returns:
         Dictionary mapping keyword → list of destination paths that were copied.
     """
-    copied: dict[str, list[Path]] = {kw: [] for kw in _KEYWORDS}
+    unique_folders = dict.fromkeys(_KEYWORD_FOLDER.values())
+    copied: dict[str, list[Path]] = {folder: [] for folder in unique_folders}
 
     raw_root = Path(config.raw_root)
-    if not raw_root.exists():
-        raise FileNotFoundError(f"raw_root does not exist: {raw_root}")
+    subject_root = raw_root / config.project / config.cohort
+    if not subject_root.exists():
+        raise FileNotFoundError(f"raw subject directory does not exist: {subject_root}")
 
-    for subject_dir in sorted(raw_root.iterdir()):
+    for subject_dir in sorted(subject_root.iterdir()):
         if not subject_dir.is_dir():
             continue
 
@@ -80,7 +91,7 @@ def sort_raw_data(config: PipelineConfig) -> dict[str, list[Path]]:
                 / keyword
                 / config.cohort
                 / subject_dir.name
-                / scan_dir.name
+                / scan_name
             )
 
             if dest.exists():
@@ -94,9 +105,9 @@ def sort_raw_data(config: PipelineConfig) -> dict[str, list[Path]]:
 
 
 def _match_keyword(scan_name: str) -> str | None:
-    """Return the first keyword that appears in scan_name, or None."""
+    """Return the destination folder for the first matching pattern, or None."""
     lower = scan_name.lower()
-    for kw in _KEYWORDS:
-        if kw.lower() in lower:
-            return kw
+    for pattern, folder in _KEYWORD_FOLDER.items():
+        if pattern.lower() in lower:
+            return folder
     return None

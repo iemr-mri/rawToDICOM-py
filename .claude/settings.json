@@ -18,7 +18,21 @@
       "Bash(python -m rawtoDICOM full --raw-root tests/raw-data/cohort1 --sorted-root tests/sorted-data --dicom-root tests/DICOM-data --project AGORA --cohort cohort1 --skip-sort)",
       "Bash(python -m pytest --co -q)",
       "Bash(python -m pytest -q --tb=short)",
-      "Bash(python -m ruff check src/rawtoDICOM/cli.py)"
+      "Bash(python -m ruff check src/rawtoDICOM/cli.py)",
+      "Bash(python -m pytest -x -q)",
+      "Bash(python -m pytest -x -q --ignore=tests/test_coil_combination.py)",
+      "Bash(python -m pytest -q --ignore=tests/test_coil_combination.py --ignore=tests/test_dicom.py)",
+      "Bash(python -m pytest -q --ignore=tests/test_coil_combination.py --ignore=tests/test_dicom.py --ignore=tests/test_self_gating.py)",
+      "Bash(python -m pytest tests/test_sort.py tests/test_pipeline.py tests/test_config.py -q)",
+      "Bash(python -m pytest tests/test_pipeline_integration.py -q)",
+      "Bash(python -m pytest tests/test_pipeline_integration.py::test_process_cine_scan_skip_if_exists tests/test_pipeline_integration.py::test_process_cine_cs_writes_dicom tests/test_pipeline_integration.py::test_dicom_cs_pixel_data_readable -v)",
+      "Bash(python -m pytest tests/test_kspace.py tests/test_compressed_sensing.py tests/test_reader.py -q)",
+      "Bash(python -m pytest tests/test_kspace.py::test_sort_kspace_output_shape -v)",
+      "Bash(python -m rawtoDICOM --raw-root tests/raw-data --sorted-root tests/sorted-data --dicom-root tests/DICOM-data --project AGORA --cohort cohort1)",
+      "Bash(python -m ruff check src/)",
+      "Bash(python -m rawtoDICOM --raw-root tests/raw-data --sorted-root tests/sorted-data --dicom-root tests/DICOM-data --project AGORA --cohort cohort1 --skip-sort --force-dicom)",
+      "Bash(python -m rawtoDICOM --raw-root tests/raw-data --sorted-root tests/sorted-data --dicom-root tests/DICOM-data --project AGORA --cohort cohort1 --skip-sort)",
+      "Bash(python -m pytest -x -q --ignore=tests/test_dicom.py)"
     ]
   }
 }

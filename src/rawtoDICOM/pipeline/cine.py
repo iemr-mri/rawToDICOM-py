@@ -26,6 +26,8 @@ def process_cine_scan(
     scan_dir: Path,
     output_dir: Path,
     *,
+    scan_label: str = "slice",
+    scan_index: int | None = None,
     force_dicom: bool = False,
 ) -> list[Path]:
     """Run the full CINE reconstruction pipeline for one scan directory.
@@ -36,6 +38,8 @@ def process_cine_scan(
         scan_dir:    Path to a single Bruker numeric scan directory containing
                      ``acqp``, ``method``, and ``rawdata.job0`` (or ``fid``).
         output_dir:  Destination directory for DICOM files.  Created if absent.
+        scan_label:  Prefix for output filenames, e.g. ``"LAX4"`` → ``LAX4_slice_001.dcm``.
+        scan_index:  Passed to ``write_dicom_series`` to override the per-file slice number.
         force_dicom: When True, existing DICOM files are overwritten.
 
     Returns:
@@ -43,9 +47,15 @@ def process_cine_scan(
     """
     output_dir = Path(output_dir)
 
-    if not force_dicom and output_dir.exists() and any(output_dir.glob("*.dcm")):
-        existing = sorted(output_dir.glob("*.dcm"))
-        return existing
+    if not force_dicom and output_dir.exists():
+        if scan_index is not None:
+            pattern = f"{scan_label}_slice_{scan_index:02d}.dcm"
+        else:
+            # Single-slice LAX → "{scan_label}.dcm"; multi-slice → "{scan_label}_slice_*.dcm"
+            pattern = f"{scan_label}*.dcm"
+        existing = sorted(output_dir.glob(pattern))
+        if existing:
+            return existing
 
     scan = load_scan(scan_dir)
 
@@ -63,4 +73,6 @@ def process_cine_scan(
     # combine_coils expects [x, y, slices, frames, coils]
     images = combine_coils(kspace_padded)  # [x, y, slices, frames]
 
-    return write_dicom_series(images, scan, output_dir)
+    return write_dicom_series(
+        images, scan, output_dir, scan_label=scan_label, scan_index=scan_index
+    )

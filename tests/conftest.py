@@ -16,6 +16,7 @@ from rawtoDICOM.bruker.scan import BrukerScan
 _SUBJECT_ROOT = (
     Path(__file__).parent
     / "raw-data"
+    / "AGORA"
     / "cohort1"
     / "AGORA2_F1_s_2025121703_1_4_20251217_103442"
 )
@@ -63,5 +64,5 @@ def cs_bruker_scan(cs_scan_dir: Path) -> BrukerScan:
 @pytest.fixture(scope="session")
 def all_subjects() -> list[Path]:
     """All subject directories in cohort1."""
-    cohort1 = Path(__file__).parent / "raw-data" / "cohort1"
+    cohort1 = Path(__file__).parent / "raw-data" / "AGORA" / "cohort1"
     return sorted(cohort1.iterdir())

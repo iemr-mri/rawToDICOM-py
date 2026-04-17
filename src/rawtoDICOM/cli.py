@@ -73,14 +73,25 @@ def _process_scan(
     scan_dir: Path,
     output_dir: Path,
     *,
+    scan_label: str,
+    scan_index: int | None,
     species: str,
     force_dicom: bool,
 ) -> list[Path]:
     """Detect scan type and run the appropriate pipeline."""
     meta = load_scan(scan_dir, read_raw=False)
     if is_sg_scan(meta):
-        return process_sg_scan(scan_dir, output_dir, species=species, force_dicom=force_dicom)
-    return process_cine_scan(scan_dir, output_dir, force_dicom=force_dicom)
+        return process_sg_scan(
+            scan_dir,
+            output_dir,
+            scan_label=scan_label,
+            scan_index=scan_index,
+            species=species,
+            force_dicom=force_dicom,
+        )
+    return process_cine_scan(
+        scan_dir, output_dir, scan_label=scan_label, scan_index=scan_index, force_dicom=force_dicom
+    )
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -117,15 +128,23 @@ def main(argv: list[str] | None = None) -> None:
 
     for subject_dir in subjects:
         print(f"Processing {subject_dir.name} …")
-        scan_dirs = sorted(
-            (d for d in subject_dir.iterdir() if d.is_dir() and d.name.isdigit()),
-            key=lambda p: int(p.name),
-        )
+        scan_dirs = sorted(d for d in subject_dir.iterdir() if d.is_dir())
+        out_dir = config.dicom_out_dir(subject_dir.name)
+        sax_index = 0
         for scan_dir in scan_dirs:
-            out_dir = config.dicom_out_dir(subject_dir.name) / scan_dir.name
+            scan_label = scan_dir.name
+            is_sax = "SAX" in scan_label.upper()
+            if is_sax:
+                sax_index += 1
+                scan_index: int | None = sax_index
+                scan_label = "SAX"
+            else:
+                scan_index = None
             written = _process_scan(
                 scan_dir,
                 out_dir,
+                scan_label=scan_label,
+                scan_index=scan_index,
                 species=args.species,
                 force_dicom=config.force_dicom,
             )

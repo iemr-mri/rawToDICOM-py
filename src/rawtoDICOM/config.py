@@ -49,4 +49,4 @@ class PipelineConfig:
 
     def dicom_out_dir(self, subject_name: str) -> Path:
         """Return the DICOM output folder for a given subject."""
-        return self.dicom_root / self.project / self.cohort / subject_name
+        return self.dicom_root / self.project / self.cohort / "CINE_DICOM" / subject_name

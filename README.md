@@ -20,6 +20,44 @@ The pipeline automatically:
 - Detects self-gating (SG) vs. standard CINE scans per scan directory.
 - Converts sorted scans to DICOM where output does not already exist.
 
+### Directory layout
+
+**Raw input** (read-only):
+```
+raw-root/
+└── AGORA/
+    └── cohort1/
+        └── AGORA2_F1_.../
+            ├── 1/          # numeric Bruker scan dirs
+            ├── 2/
+            └── ...
+```
+
+**Sorted output** — scans renamed using `ACQ_scan_name`:
+```
+sorted-root/
+└── AGORA/
+    └── CINE/
+        └── cohort1/
+            └── AGORA2_F1_.../
+                ├── LAX4/   # scan name from acqp, not the numeric folder
+                ├── SAX1/
+                └── ...
+```
+
+**DICOM output** — all slices flat in one subject folder, named by scan and slice:
+```
+dicom-root/
+└── AGORA/
+    └── cohort1/
+        └── CINE_DICOM/
+            └── AGORA2_F1_.../
+                ├── LAX4_slice_001.dcm
+                ├── SAX1_slice_001.dcm
+                ├── SAX1_slice_002.dcm
+                └── ...
+```
+
 ### Flags
 
 | Flag | Effect |
@@ -131,7 +169,7 @@ src/
 - `shuffle_slices()` — reorders from Bruker's interleaved acquisition order to anatomical order.
 - `orient_rotation()` — 2D rotation + optional y-flip via 6-case lookup on read × slice orientation fields. Reliable for standard planes; unreliable for oblique LAX.
 - `orient_rotation_from_visu()` — alternative using `VisuCoreOrientation` vectors; scores all 8 × 90° transforms against a target display convention. More principled for oblique planes.
-- `write_dicom_series()` — writes one multi-frame DICOM file per slice, mapping `visu_pars` fields to standard tags.
+- `write_dicom_series()` — writes one multi-frame DICOM file per slice, named `{scan_label}_slice_{n:03d}.dcm`, mapping `visu_pars` fields to standard tags.
 
 ---
 
@@ -149,7 +187,7 @@ pytest -m slow        # generate animated GIFs to tests/examples/
 
 ## Tests
 
-All tests run against real Bruker ParaVision data in `tests/raw-data/` (12 scans, cohort1).
+All tests run against real Bruker ParaVision data in `tests/raw-data/AGORA/cohort1/` (12 scans, cohort1).
 
 | File | Count | Covers |
 |---|---|---|
