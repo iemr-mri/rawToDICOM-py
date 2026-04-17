@@ -8,6 +8,9 @@ tests/sorted-data/*
 tests/raw-data/*
 !tests/raw-data/.gitkeep
 
+# MATLAB legacy code
+MATLAB-legacy/
+
 
 
 # Byte-compiled / optimized / DLL files

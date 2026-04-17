@@ -8,6 +8,7 @@ and writes one multi-frame DICOM file per slice using pydicom.
 
 from __future__ import annotations
 
+import datetime
 from pathlib import Path
 
 import numpy as np
@@ -16,7 +17,7 @@ from pydicom.dataset import FileDataset, FileMetaDataset
 from pydicom.uid import UID, ExplicitVRLittleEndian, generate_uid
 
 from rawtoDICOM.bruker.scan import BrukerScan
-from rawtoDICOM.dicom.geometry import apply_corrections, orient_rotation, shuffle_slices
+from rawtoDICOM.dicom.geometry import apply_corrections, shuffle_slices
 
 # DICOM SOP class UID for MR Image Storage
 _MR_IMAGE_STORAGE = "1.2.840.10008.5.1.4.1.1.4"
@@ -66,11 +67,7 @@ def write_dicom_series(
     m = scan.method
     vp = scan.visu_pars
 
-    # Pixel spacing from pre-orientation image size (matches MATLAB).
-    x_size, y_size = corrected.shape[0], corrected.shape[1]
     extent = np.asarray(vp.get("VisuCoreExtent", [1.0, 1.0])).ravel()
-    pixel_spacing = [float(extent[0]) / x_size, float(extent[1]) / y_size]
-
     raw_positions = np.asarray(
         vp.get("VisuCorePosition", np.zeros((n_slices, 3)))
     ).reshape(-1, 3)
@@ -87,12 +84,19 @@ def write_dicom_series(
     estimated_hr = 60.0 / (acq_tr_ms / 1000.0)
     hr_bpm = heart_rate if heart_rate is not None else estimated_hr
 
-    series_uid = generate_uid()
+    # Derive stable UIDs from the subject ID so all scans for the same subject
+    # share one StudyInstanceUID and SeriesInstanceUID — makes LAX + SAX load
+    # together in DICOM viewers.
+    study_uid = generate_uid(entropy_srcs=[patient_id, "study"])
+    series_uid = generate_uid(entropy_srcs=[patient_id])
     written: list[Path] = []
 
     for slice_idx in range(n_slices):
         slice_data = corrected[:, :, slice_idx, :]  # [x, y, frames]
-        oriented = orient_rotation(slice_data, scan)  # shape may differ
+        pixel_spacing = [
+            float(extent[0]) / slice_data.shape[0],
+            float(extent[1]) / slice_data.shape[1],
+        ]
 
         position = raw_positions[min(slice_idx, len(raw_positions) - 1)].tolist()
         orientation = raw_orientations[min(slice_idx, len(raw_orientations) - 1), :6].tolist()
@@ -106,7 +110,8 @@ def write_dicom_series(
         out_path = output_dir / f"{file_stem}.dcm"
 
         ds = _build_dataset(
-            oriented.astype(np.int16),
+            slice_data,
+            study_uid=study_uid,
             series_uid=series_uid,
             patient_id=patient_id,
             protocol=protocol,
@@ -116,6 +121,7 @@ def write_dicom_series(
             orientation=orientation,
             pixel_spacing=pixel_spacing,
             heart_rate=hr_bpm,
+            instance_number=slice_number,
         )
         ds.save_as(str(out_path), enforce_file_format=True)
         written.append(out_path)
@@ -126,6 +132,7 @@ def write_dicom_series(
 def _build_dataset(
     slice_images: npt.NDArray[np.int16],
     *,
+    study_uid: str,
     series_uid: str,
     patient_id: str,
     protocol: str,
@@ -135,6 +142,8 @@ def _build_dataset(
     orientation: list[float],
     pixel_spacing: list[float],
     heart_rate: float,
+    instance_number: int = 1,
+    series_number: int = 1,
 ) -> FileDataset:
     """Construct a pydicom FileDataset for one slice with all frames.
 
@@ -151,16 +160,32 @@ def _build_dataset(
     file_meta.MediaStorageSOPInstanceUID = generate_uid()
     file_meta.TransferSyntaxUID = UID(ExplicitVRLittleEndian)
 
+    now = datetime.datetime.now()
+    date_str = now.strftime("%Y%m%d")
+    time_str = now.strftime("%H%M%S.%f")
+
     ds = FileDataset(
         filename_or_obj="",
         dataset={},
         file_meta=file_meta,
         preamble=b"\x00" * 128,
     )
+    ds.SpecificCharacterSet = "ISO_IR 6"
     ds.SOPClassUID = _MR_IMAGE_STORAGE
     ds.SOPInstanceUID = file_meta.MediaStorageSOPInstanceUID
     ds.SeriesInstanceUID = series_uid
-    ds.StudyInstanceUID = generate_uid()
+    ds.StudyInstanceUID = study_uid
+    ds.StudyID = "1"
+    ds.SeriesNumber = series_number
+    ds.InstanceNumber = instance_number
+
+    # Dates and times
+    ds.StudyDate = date_str
+    ds.SeriesDate = date_str
+    ds.AcquisitionDate = date_str
+    ds.StudyTime = time_str
+    ds.SeriesTime = time_str
+    ds.AcquisitionTime = time_str
 
     # Patient
     ds.PatientID = patient_id
@@ -174,6 +199,7 @@ def _build_dataset(
     ds.MRAcquisitionType = "2D"
     ds.InPlanePhaseEncodingDirection = "ROW"
     ds.ProtocolName = protocol
+    ds.AnatomicalOrientation = "QUADRUPED"
 
     # Geometry
     ds.SliceThickness = slice_thick

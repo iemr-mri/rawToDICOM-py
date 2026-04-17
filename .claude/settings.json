@@ -32,7 +32,25 @@
       "Bash(python -m ruff check src/)",
       "Bash(python -m rawtoDICOM --raw-root tests/raw-data --sorted-root tests/sorted-data --dicom-root tests/DICOM-data --project AGORA --cohort cohort1 --skip-sort --force-dicom)",
       "Bash(python -m rawtoDICOM --raw-root tests/raw-data --sorted-root tests/sorted-data --dicom-root tests/DICOM-data --project AGORA --cohort cohort1 --skip-sort)",
-      "Bash(python -m pytest -x -q --ignore=tests/test_dicom.py)"
+      "Bash(python -m pytest -x -q --ignore=tests/test_dicom.py)",
+      "Bash(pytest)",
+      "Bash(ruff check *)",
+      "Bash(python -m pytest -q)",
+      "Bash(grep -v \"^##\\\\$\\\\|^\\\\\\\\$\\\\\\\\$\")",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('tests/visualize_pipeline.py'\\).read\\(\\)\\); print\\('syntax OK'\\)\")",
+      "Bash(grep -v \"^##\\\\$\\\\|^\\\\$\\\\$\")",
+      "Bash(python3 -c ' *)",
+      "Bash(grep '^##$NR\\\\b' 'c:/Users/heskalde/Claude projects/rawToDICOM-py/tests/raw-data/AGORA/cohort1/AGORA2_F1_s_2025121703_1_4_20251217_103442/10/acqp')",
+      "Bash(grep '^##$NR\\\\b' 'c:/Users/heskalde/Claude projects/rawToDICOM-py/tests/raw-data/AGORA/cohort1/AGORA2_F1_s_2025121703_1_4_20251217_103442/15/acqp')",
+      "Bash(python -m pytest tests/test_pipeline_integration.py -k \"lax\" -v)",
+      "Bash(python -m pytest tests/test_kspace.py -v)",
+      "Bash(python -m pytest tests/ -v --ignore=tests/test_pipeline_integration.py -q)",
+      "Bash(python tests/visualize_pipeline.py)",
+      "Bash(python -m ruff check src/rawtoDICOM/dicom/writer.py)",
+      "Bash(pytest tests/test_dicom.py -q)",
+      "Bash(python -)",
+      "Bash(python -m rawtoDICOM --raw-root tests/raw-data --sorted-root tests/sorted-data --dicom-root tests/DICOM-data --cohort cohort1 --force-dicom)",
+      "Bash(python -m rawtoDICOM --raw-root tests/raw-data --sorted-root tests/sorted-data --dicom-root tests/DICOM-data --project AGORA --cohort cohort1 --force-dicom)"
     ]
   }
 }

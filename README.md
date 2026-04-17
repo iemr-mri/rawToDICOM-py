@@ -130,6 +130,7 @@ src/
 | `pm` struct passed everywhere and mutated | Immutable `PipelineConfig` frozen dataclass |
 | Intermediate `imageData.mat` saves between pipeline steps | Arrays flow directly between steps |
 | `combineCoils.m` uses forward FFT on k-space instead of IFFT | Correct IFFT via normalized `ifft2c` |
+| CINE pipeline has no spatial interpolation | 2× k-space zero-padding before IFFT doubles the reconstruction matrix; `PixelSpacing` and phase-offset correction use the actual (padded) image dimensions |
 | SG pipeline added later with duplicated reconstruction logic | SG reuses `reconstruct_cs()` and `combine_coils()` |
 | Separate CLI paths for CINE vs SG scan processing | Single pipeline auto-detects via `is_sg_scan()` |
 
@@ -165,7 +166,7 @@ src/
 
 ### dicom/
 
-- `apply_corrections()` — phase-offset pixel shift per slice + int16 normalisation (30 000-count ceiling).
+- `apply_corrections()` — phase-offset pixel shift per slice + int16 normalisation (30 000-count ceiling). Pixel offset is computed from the actual image y-size so it remains accurate after zero-padding.
 - `shuffle_slices()` — reorders from Bruker's interleaved acquisition order to anatomical order.
 - `orient_rotation()` — 2D rotation + optional y-flip via 6-case lookup on read × slice orientation fields. Reliable for standard planes; unreliable for oblique LAX.
 - `orient_rotation_from_visu()` — alternative using `VisuCoreOrientation` vectors; scores all 8 × 90° transforms against a target display convention. More principled for oblique planes.

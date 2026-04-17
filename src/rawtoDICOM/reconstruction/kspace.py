@@ -65,14 +65,20 @@ def sort_kspace(scan: BrukerScan) -> npt.NDArray[Any]:
     flow_enc_dir = 1
 
     # When NR > 1, the raw file stores NR repetitions of the full acquisition
-    # (NR is the outermost loop in Bruker: NR → frames → y-lines → readout).
-    # Average across NR repetitions before sorting to improve SNR, matching
-    # the single-repetition dimensionality that CSPhaseEncList describes.
-    acq_per_nr = movie_frames * slices * flow_enc_dir
+    # (NR is the outermost loop in Bruker: NR → y-lines → frames → readout).
+    # Average across NR repetitions before sorting to improve SNR.
+    #
+    # For CS scans, CSPhaseEncList enumerates all y-line acquisitions for one NR,
+    # so acq_per_nr comes directly from that list.  For fully-sampled scans, read
+    # NR from acqp (the authoritative source) to avoid misidentifying y-lines as
+    # repetitions when nr would otherwise be computed as total_acq / frames.
     if "CSPhaseEncList" in method:
         nr_lines = len(np.asarray(method["CSPhaseEncList"]).ravel())
         acq_per_nr = nr_lines  # CSPhaseEncList covers exactly one NR
-    nr = total_acq // acq_per_nr
+        nr = total_acq // acq_per_nr
+    else:
+        nr = int(np.asarray(scan.acqp.get("NR", 1)).ravel()[0])
+        acq_per_nr = total_acq // nr
     if nr > 1:
         data = data.reshape(coils, x_data, nr, acq_per_nr).mean(axis=2)
         total_acq = acq_per_nr

@@ -222,7 +222,7 @@ def shuffle_data(
             mid_acq_idx += 1
         else:
             acq_data = sg_raw.kspace[:, :, ks_acq_idx]  # [coils, x]
-            ky_pos = int(sg_raw.cs_vector[ks_acq_idx]) + actual_y // 2  # centre to 0-indexed
+            ky_pos = int(sg_raw.cs_vector[ks_acq_idx]) + actual_y // 2 - 1  # centre to 0-indexed
             ky_pos = int(np.clip(ky_pos, 0, actual_y - 1))
 
             existing = kspace_out[:, :, ky_pos, frame_idx]

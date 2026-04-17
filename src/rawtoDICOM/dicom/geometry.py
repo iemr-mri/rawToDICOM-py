@@ -32,10 +32,12 @@ def apply_corrections(
     """
     m = scan.method
     fov_cm = float(np.asarray(m["PVM_FovCm"]).ravel()[0])
-    matrix = int(np.asarray(m["PVM_DefMatrix"]).ravel()[0])
     offset_mm = float(np.asarray(m["PVM_Phase1Offset"]).ravel()[0])
 
-    resolution_cm = fov_cm / matrix
+    # Use the actual image y-size so the offset is correct after any zero-padding.
+    # MATLAB uses PVM_DefMatrix (acquisition matrix); dividing the same FOV by the
+    # actual (possibly 2× larger) pixel count gives the correct resolution.
+    resolution_cm = fov_cm / images.shape[1]
     offset_pixels = (offset_mm / 10.0) / resolution_cm
 
     shifted = np.roll(images, -round(offset_pixels), axis=1)
@@ -77,6 +79,94 @@ def shuffle_slices(
     order[1::2] = np.arange(half, n_slices)
 
     return images[:, :, order, :]
+
+
+def bruker_to_lps(
+    scan: BrukerScan,
+) -> tuple[npt.NDArray[np.floating], npt.NDArray[np.floating]]:
+    """Convert Bruker position/orientation to DICOM LPS patient coordinates.
+
+    Bruker's scanner frame (horizontal bore) uses a different axis convention
+    than DICOM's LPS (Left-Posterior-Superior) patient frame.  The mapping is
+    a diagonal sign-flip matrix whose entries depend on ``VisuSubjectPosition``:
+
+    ==================  ====  ====  ====
+    Subject position     L     P     S
+    ==================  ====  ====  ====
+    Head_Supine          −x   −y    −z
+    Head_Prone           −x   +y    −z
+    Foot_Supine          −x   −y    +z
+    Foot_Prone           −x   +y    +z
+    ==================  ====  ====  ====
+
+    Axis signs for a horizontal bore (x = bore lateral, y = vertical ↑, z = outward
+    toward patient-entry side):
+
+    * L = −x always: for supine head-first, the patient's right arm is at +x, so
+      patient Left = −x.  Prone/feet-first both flip L/R twice → net unchanged.
+    * P = +y for prone (patient's back faces upward), −y for supine.
+    * S = +z for foot-first (head is at the entry/+z side), −z for head-first.
+
+    Applying this rotation R to ``VisuCorePosition`` and to the row/column
+    direction cosines from ``VisuCoreOrientation`` produces values that are
+    valid in DICOM LPS space, enabling cross-scan co-registration in any DICOM
+    viewer.
+
+    Note: only the four axis-aligned positions above are handled.  Tilted-bore
+    or non-standard entries fall back to the identity, which is incorrect but
+    safe to output.
+
+    Args:
+        scan: BrukerScan whose ``visu_pars`` contains ``VisuCorePosition``,
+              ``VisuCoreOrientation``, and ``VisuSubjectPosition``.
+
+    Returns:
+        positions_lps:    float64 array [n_slices, 3] — ``ImagePositionPatient``
+                          values in LPS mm, one row per slice.
+        orientations_lps: float64 array [n_slices, 6] — ``ImageOrientationPatient``
+                          values (row-direction cosines then column-direction
+                          cosines) in LPS, one row per slice.
+    """
+    vp = scan.visu_pars
+
+    subject_position = str(vp.get("VisuSubjectPosition", "")).strip()
+
+    # Sign of each Bruker axis in the LPS frame: [L_sign, P_sign, S_sign]
+    # where the mapped axes are always (x→L, y→P, z→S) with these signs.
+    _POSITION_TO_SIGNS: dict[str, tuple[float, float, float]] = {
+        "Head_Supine": (-1.0, -1.0, -1.0),
+        "Head_Prone":  (-1.0, +1.0, -1.0),
+        "Foot_Supine": (-1.0, -1.0, +1.0),
+        "Foot_Prone":  (-1.0, +1.0, +1.0),
+    }
+    signs = _POSITION_TO_SIGNS.get(subject_position, (1.0, 1.0, 1.0))
+    rotation = np.diag(signs)  # 3×3 diagonal, each entry ±1
+
+    raw_positions = np.asarray(
+        vp.get("VisuCorePosition", np.zeros((1, 3)))
+    ).reshape(-1, 3).astype(float)
+
+    raw_orientations = np.asarray(
+        vp.get("VisuCoreOrientation", np.eye(3).ravel())
+    ).reshape(-1, 9).astype(float)
+
+    n_slices = max(len(raw_positions), len(raw_orientations))
+
+    positions_lps = np.zeros((n_slices, 3), dtype=float)
+    orientations_lps = np.zeros((n_slices, 6), dtype=float)
+
+    for i in range(n_slices):
+        pos_idx = min(i, len(raw_positions) - 1)
+        ori_idx = min(i, len(raw_orientations) - 1)
+
+        positions_lps[i] = rotation @ raw_positions[pos_idx]
+
+        row_dir = raw_orientations[ori_idx, 0:3]  # read direction
+        col_dir = raw_orientations[ori_idx, 3:6]  # phase direction
+        orientations_lps[i, 0:3] = rotation @ row_dir
+        orientations_lps[i, 3:6] = rotation @ col_dir
+
+    return positions_lps, orientations_lps
 
 
 def orient_rotation(
