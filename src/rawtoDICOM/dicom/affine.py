@@ -1,12 +1,12 @@
 """Bruker-to-DICOM affine math and LPS resolution.
 
-Translated from BrkRaw resolver/affine.py.  Covers the full pipeline from
-raw Bruker orientation/position parameters to per-slice ImagePositionPatient
-and ImageOrientationPatient values, plus the companion pixel-axis corrections.
+Faithful translation of BrkRaw resolver/affine.py, adapted for our pipeline
+I/O (BrukerScan dataclass instead of BrkRaw Scan/Reco nodes).
 """
 
 from __future__ import annotations
 
+import logging
 from typing import Optional
 
 import numpy as np
@@ -14,24 +14,30 @@ import numpy.typing as npt
 
 from rawtoDICOM.bruker.scan import BrukerScan
 
+logger = logging.getLogger(__name__)
+
 
 # ---------------------------------------------------------------------------
-# Primitive affine helpers
+# Primitive affine helpers  (mirrors BrkRaw 1:1)
 # ---------------------------------------------------------------------------
 
 def from_matvec(
     mat: npt.NDArray[np.floating],
     vec: npt.NDArray[np.floating],
 ) -> npt.NDArray[np.floating]:
-    affine: npt.NDArray[np.floating] = np.eye(4)
-    affine[:3, :3] = mat
-    affine[:3, 3] = vec
-    return affine
+    if mat.shape == (3, 3) and vec.shape == (3,):
+        affine: npt.NDArray[np.floating] = np.eye(4)
+        affine[:3, :3] = mat
+        affine[:3, 3] = vec
+        return affine
+    raise ValueError("Matrix must be 3×3 and vector must be length 3")
 
 
 def to_matvec(
     affine: npt.NDArray[np.floating],
 ) -> tuple[npt.NDArray[np.floating], npt.NDArray[np.floating]]:
+    if np.asarray(affine).shape != (4, 4):
+        raise ValueError("Affine matrix must be 4×4")
     return affine[:3, :3].copy(), affine[:3, 3].copy()
 
 
@@ -40,17 +46,27 @@ def rotate_affine(
     rad_x: float = 0.0,
     rad_y: float = 0.0,
     rad_z: float = 0.0,
+    pivot: Optional[npt.NDArray[np.floating]] = None,
 ) -> npt.NDArray[np.floating]:
+    """Rotate a 4×4 affine; optionally around a world-space pivot point."""
     A = np.asarray(affine, dtype=float)
-    cx, sx = np.cos(rad_x), np.sin(rad_x)
-    cy, sy = np.cos(rad_y), np.sin(rad_y)
-    cz, sz = np.cos(rad_z), np.sin(rad_z)
-    Rx = np.array([[1, 0, 0], [0, cx, -sx], [0, sx, cx]])
-    Ry = np.array([[cy, 0, sy], [0, 1, 0], [-sy, 0, cy]])
-    Rz = np.array([[cz, -sz, 0], [sz, cz, 0], [0, 0, 1]])
+    Rx = np.array([[1, 0, 0],
+                   [0, np.cos(rad_x), -np.sin(rad_x)],
+                   [0, np.sin(rad_x),  np.cos(rad_x)]])
+    Ry = np.array([[ np.cos(rad_y), 0, np.sin(rad_y)],
+                   [0,              1, 0],
+                   [-np.sin(rad_y), 0, np.cos(rad_y)]])
+    Rz = np.array([[np.cos(rad_z), -np.sin(rad_z), 0],
+                   [np.sin(rad_z),  np.cos(rad_z), 0],
+                   [0,              0,             1]])
     R = Rz @ Ry @ Rx
     M, t = to_matvec(A)
-    return from_matvec(R @ M, R @ t)
+    if pivot is None:
+        t_new = R @ t
+    else:
+        p = np.asarray(pivot, dtype=float).reshape(3)
+        t_new = R @ t + (p - R @ p)
+    return from_matvec(R @ M, t_new)
 
 
 def flip_affine(
@@ -58,15 +74,20 @@ def flip_affine(
     flip_x: bool = False,
     flip_y: bool = False,
     flip_z: bool = False,
+    pivot: Optional[npt.NDArray[np.floating]] = None,
 ) -> npt.NDArray[np.floating]:
+    """Flip world axes of an affine; optionally around a world-space pivot point."""
     A = np.asarray(affine, dtype=float)
     M, t = to_matvec(A)
-    F = np.diag([
-        -1.0 if flip_x else 1.0,
-        -1.0 if flip_y else 1.0,
-        -1.0 if flip_z else 1.0,
-    ])
-    return from_matvec(F @ M, F @ t)
+    F = np.diag([-1.0 if flip_x else 1.0,
+                 -1.0 if flip_y else 1.0,
+                 -1.0 if flip_z else 1.0])
+    if pivot is None:
+        t_new = F @ t
+    else:
+        p = np.asarray(pivot, dtype=float).reshape(3)
+        t_new = F @ t + (p - F @ p)
+    return from_matvec(F @ M, t_new)
 
 
 def flip_voxel_axis_affine(
@@ -74,12 +95,7 @@ def flip_voxel_axis_affine(
     axis: int,
     shape: tuple[int, ...],
 ) -> npt.NDArray[np.floating]:
-    """Flip a voxel axis in an affine, shifting the origin to keep physical space correct.
-
-    Negates column `axis` of the rotation and shifts the translation by (n-1)
-    voxels along the original column direction so the flipped array still maps
-    to the same physical volume.  Translated from BrkRaw flip_voxel_axis_affine.
-    """
+    """Flip a voxel axis, shifting origin by (n-1) voxels to preserve physical space."""
     A = np.asarray(affine, float)
     M = A[:3, :3].copy()
     t = A[:3, 3].copy()
@@ -100,33 +116,20 @@ def unwrap_to_scanner_xyz(
     subject_type: Optional[str],
     subject_pose: str,
 ) -> npt.NDArray[np.floating]:
-    """Convert a Bruker scanner-reference-frame affine to scanner XYZ (→ DICOM LPS).
+    """Convert Bruker subject-frame affine to scanner XYZ (→ DICOM LPS).
 
-    Translated from BrkRaw unwrap_to_scanner_xyz.
-
-    Bruker stores VisuCorePosition / VisuCoreOrientation in a subject-relative
-    frame.  The exact frame depends on species:
-      Quadruped: PV uses LSA+; flip_x converts to RSA+ (scanner view).
-      Biped:     PV uses LPS+; flip_y converts to LAS+ (scanner view).
-    Foot-first entry additionally applies a 180° Y-rotation before the above.
-    Gravity orientation (Prone / Supine / Left / Right) adds a Z-rotation.
+    Only Biped and Quadruped receive pose-specific transforms; all other subject
+    types pass through unchanged (matches BrkRaw behaviour).
     """
     _affine = np.asarray(affine, dtype=float)
     head_or_foot, gravity = subject_pose.split("_", 1)
-    subject_type = subject_type or "Biped"
+    subject_type = subject_type or "Biped"  # PV5.1 backward compatibility
 
     if head_or_foot == "Foot":
         _affine = rotate_affine(_affine, rad_y=np.pi)
 
-    if subject_type in ("Quadruped", "OtherAnimal"):
-        _affine = flip_affine(_affine, flip_x=True)
-        if gravity == "Supine":
-            _affine = rotate_affine(_affine, rad_z=np.pi)
-        elif gravity == "Left":
-            _affine = rotate_affine(_affine, rad_z=np.pi / 2)
-        elif gravity == "Right":
-            _affine = rotate_affine(_affine, rad_z=-np.pi / 2)
-    else:  # Biped / Phantom / Other / default
+    if subject_type == "Biped":
+        # PV stores affine in LPS+; scanner coord is LAS+ → flip Y
         _affine = flip_affine(_affine, flip_y=True)
         if gravity == "Prone":
             _affine = rotate_affine(_affine, rad_z=np.pi)
@@ -135,23 +138,32 @@ def unwrap_to_scanner_xyz(
         elif gravity == "Right":
             _affine = rotate_affine(_affine, rad_z=np.pi / 2)
 
+    elif subject_type == "Quadruped":
+        # PV uses LSA+; scanner is RSA+ → flip X
+        _affine = flip_affine(_affine, flip_x=True)
+        if gravity == "Supine":
+            _affine = rotate_affine(_affine, rad_z=np.pi)
+        elif gravity == "Left":
+            _affine = rotate_affine(_affine, rad_z=np.pi / 2)
+        elif gravity == "Right":
+            _affine = rotate_affine(_affine, rad_z=-np.pi / 2)
+
     return _affine
 
 
 # ---------------------------------------------------------------------------
-# Slice-pack resolution
+# Slice-pack resolution  (mirrors BrkRaw resolve_slice_pack / resolve_matvec_and_shape)
 # ---------------------------------------------------------------------------
 
 def _resolve_slice_pack(
     method: dict,  # type: ignore[type-arg]
-) -> tuple[int, list[int], list[float], list[str]]:
-    """Extract per-pack slice counts, thicknesses, and orientations from method params.
+) -> tuple[int, list[int], list[float]]:
+    """Parse per-pack slice counts and effective thicknesses from method params.
 
-    Returns (n_packs, slices_per_pack, thickness_per_pack, orient_name_per_pack).
-    Thickness is slice distance + gap, matching BrkRaw's convention.
+    Returns (n_packs, slices_per_pack, effective_thickness_per_pack).
+    effective_thickness = PVM_SPackArrSliceDistance + PVM_SPackArrSliceGap.
     """
     n_packs = int(np.asarray(method.get("PVM_NSPacks", 1)).ravel()[0])
-
     n_slices = list(
         np.asarray(method.get("PVM_SPackArrNSlices", [1])).ravel()[:n_packs].astype(int)
     )
@@ -161,91 +173,103 @@ def _resolve_slice_pack(
     gap = list(
         np.asarray(method.get("PVM_SPackArrSliceGap", [0.0])).ravel()[:n_packs].astype(float)
     )
-    # BrkRaw: effective slice thickness = slice distance + gap
-    thickness = [thickness[i] + gap[i] for i in range(n_packs)]
-
-    raw_orients = np.asarray(method.get("PVM_SPackArrSliceOrient", ["axial"])).ravel()
-    if n_packs == 1:
-        orient_names = [str(raw_orients[0]).lower()]
-    else:
-        orient_names = [
-            str(raw_orients[min(i, len(raw_orients) - 1)]).lower() for i in range(n_packs)
-        ]
-
-    return n_packs, n_slices, thickness, orient_names
+    effective = [thickness[i] + gap[i] for i in range(n_packs)]
+    return n_packs, n_slices, effective
 
 
-def _build_pack_affine(
+def _resolve_matvec_and_shape(
     visu_pars: dict,  # type: ignore[type-arg]
     spack_idx: int,
-    pack_slice_start: int,
-    pack_n_slices: int,
-    pack_thickness: float,
-    total_slices: int,
-) -> npt.NDArray[np.floating]:
-    """Build the 4x4 affine for one slice pack.
+    num_slices: list[int],
+    slice_thickness: list[float],
+) -> tuple[npt.NDArray[np.floating], npt.NDArray[np.floating], tuple[int, ...]]:
+    """Build (mat, vec, shape) for one slice pack.
 
-    Mirrors BrkRaw resolve_matvec_and_shape for the 2D multi-slice case:
-    - Extracts the pack's orientation and position entries from the Visu arrays.
-    - Uses minimum-projection origin selection for multi-slice packs so the
-      origin is the slice with the smallest projection onto the slice normal,
-      which gives a consistent anatomical ordering regardless of acquisition order.
-    - Scales each rotation column by voxel resolution (extent / size).
+    Direct translation of BrkRaw resolve_matvec_and_shape for dim==2.
+    Raises ValueError when orientation/position arrays cannot unambiguously
+    supply per-slice entries for a multi-slice pack.
     """
-    raw_orient = np.asarray(
-        visu_pars.get("VisuCoreOrientation", np.eye(3).ravel())
-    ).reshape(-1, 9).astype(float)
-    raw_pos = np.asarray(
-        visu_pars.get("VisuCorePosition", np.zeros((1, 3)))
-    ).reshape(-1, 3).astype(float)
-    extent = np.asarray(visu_pars.get("VisuCoreExtent", [1.0, 1.0])).ravel().astype(float)
-    core_size = np.asarray(visu_pars.get("VisuCoreSize", [1, 1])).ravel().astype(float)
+    rotate = np.asarray(visu_pars.get("VisuCoreOrientation", np.eye(3).ravel()), dtype=float)
+    origin = np.asarray(visu_pars.get("VisuCorePosition", np.zeros(3)), dtype=float)
+    extent = np.asarray(visu_pars.get("VisuCoreExtent", [1.0, 1.0]), dtype=float).ravel()
+    shape  = np.asarray(visu_pars.get("VisuCoreSize", [1, 1]), dtype=float).ravel()
 
-    pack_end = pack_slice_start + pack_n_slices
+    num_slice_packs = len(num_slices)
+    total_slices = int(np.sum(np.asarray(num_slices, dtype=int)))
+    spack_slice_start = int(np.sum(np.asarray(num_slices[:spack_idx], dtype=int)))
+    spack_slice_end = spack_slice_start + int(num_slices[spack_idx])
 
-    # Select orientation entries for this pack (prefer per-slice; fall back to per-pack)
-    if raw_orient.shape[0] >= total_slices:
-        pack_orient = raw_orient[pack_slice_start:pack_end]
-    elif raw_orient.shape[0] == 1:
-        pack_orient = np.tile(raw_orient[0], (pack_n_slices, 1))
+    def _select_slice_entries(
+        arr: npt.NDArray[np.floating], width: int, name: str
+    ) -> npt.NDArray[np.floating]:
+        arr = np.asarray(arr, dtype=float)
+        if arr.ndim == 1:
+            if arr.size == width:
+                arr = arr.reshape((1, width))
+            else:
+                raise ValueError(f"{name} has shape {arr.shape}, expected (*, {width})")
+        if arr.ndim != 2 or arr.shape[1] != width:
+            raise ValueError(f"{name} has shape {arr.shape}, expected (*, {width})")
+
+        if arr.shape[0] > total_slices:
+            if not np.allclose(arr[:total_slices], arr[0], atol=0, rtol=0):
+                logger.warning(
+                    "%s has %d entries but expected %d; using the first %d.",
+                    name, arr.shape[0], total_slices, total_slices,
+                )
+            arr = arr[:total_slices, :]
+
+        if arr.shape[0] == total_slices:
+            return arr[spack_slice_start:spack_slice_end, :]
+
+        # Per-pack fallback: only valid for single-slice packs
+        if arr.shape[0] == num_slice_packs:
+            if int(num_slices[spack_idx]) != 1:
+                raise ValueError(
+                    f"{name} provides one entry per slice pack ({num_slice_packs}) "
+                    f"but pack {spack_idx} has {num_slices[spack_idx]} slices; "
+                    "per-slice entries are required."
+                )
+            return arr[spack_idx : spack_idx + 1, :]
+
+        raise ValueError(
+            f"{name} has {arr.shape[0]} entries, expected {total_slices} (per-slice) "
+            f"or {num_slice_packs} (per-pack); num_slices={num_slices}."
+        )
+
+    _rotate = _select_slice_entries(rotate.reshape(-1, 9), 9, "VisuCoreOrientation")
+    _origin = _select_slice_entries(origin.reshape(-1, 3), 3, "VisuCorePosition")
+    _num_slices = num_slices[spack_idx]
+    _slice_thickness = slice_thickness[spack_idx]
+
+    if _rotate.shape[0] > 1 and not np.allclose(_rotate, _rotate[0], atol=0, rtol=0):
+        logger.warning(
+            "VisuCoreOrientation varies across slices in pack %d; using first slice.",
+            spack_idx,
+        )
+
+    row = _rotate[0, 0:3]
+    col = _rotate[0, 3:6]
+    slc = _rotate[0, 6:9]
+
+    n = slc / np.linalg.norm(slc)
+    if _num_slices > 1:
+        s = _origin @ n
+        vec: npt.NDArray[np.floating] = _origin[int(np.argmin(s))]
     else:
-        row = raw_orient[min(spack_idx, len(raw_orient) - 1)]
-        pack_orient = np.tile(row, (pack_n_slices, 1))
+        vec = _origin[0]
 
-    # Select position entries for this pack
-    if raw_pos.shape[0] >= total_slices:
-        pack_pos = raw_pos[pack_slice_start:pack_end]
-    elif raw_pos.shape[0] == 1:
-        pack_pos = np.tile(raw_pos[0], (pack_n_slices, 1))
-    else:
-        pack_pos = np.tile(raw_pos[min(spack_idx, len(raw_pos) - 1)], (pack_n_slices, 1))
-
-    row_dir = pack_orient[0, 0:3]
-    col_dir = pack_orient[0, 3:6]
-    slc_dir = pack_orient[0, 6:9]
-
-    # BrkRaw minimum-projection origin: the slice whose position projects least
-    # along the slice normal is the anatomical "first" slice and becomes the origin.
-    if pack_n_slices > 1:
-        n = slc_dir / np.linalg.norm(slc_dir)
-        s = pack_pos @ n
-        origin = pack_pos[int(np.argmin(s))]
-    else:
-        origin = pack_pos[0]
-
-    # Voxel resolutions: in-plane from VisuCoreExtent / VisuCoreSize; through-plane
-    # from the effective slice thickness supplied by the caller.
-    full_extent = np.array([extent[0], extent[1], pack_n_slices * pack_thickness])
-    full_shape = np.array([core_size[0], core_size[1], float(pack_n_slices)])
-    resols = full_extent / full_shape
-
-    rot = np.column_stack([row_dir, col_dir, slc_dir])
+    shape_3d = np.append(shape, _num_slices)
+    extent_3d = np.append(extent, _num_slices * _slice_thickness)
+    resols = extent_3d / shape_3d
+    rot = np.column_stack([row, col, slc])
     mat = rot * resols.reshape(1, 3)
-    return from_matvec(mat, origin)
+
+    return mat, vec, tuple(shape_3d.astype(int).tolist())
 
 
 # ---------------------------------------------------------------------------
-# Public API: affine-based LPS resolution and pixel corrections
+# Public API
 # ---------------------------------------------------------------------------
 
 def bruker_to_lps(
@@ -258,38 +282,42 @@ def bruker_to_lps(
 ]:
     """Build DICOM position/orientation metadata from Bruker parameters.
 
-    Follows BrkRaw resolve() approach for each slice pack:
-    1. Parse PVM_NSPacks / PVM_SPackArrNSlices for per-pack slice counts.
-    2. Build a 4x4 affine from VisuCoreOrientation / VisuCorePosition /
-       VisuCoreExtent / VisuCoreSize, with minimum-projection origin selection.
-    3. Phase flip (ACQ_scaling_phase < 0): flip_voxel_axis_affine(axis=1).
-    4. Coronal flip (PVM_SPackArrSliceOrient == "coronal"): flip_voxel_axis_affine(axis=2).
-    5. Subject-type/position transform via unwrap_to_scanner_xyz (quadruped-aware).
-    6. Expand each pack's affine to per-slice ImagePositionPatient /
-       ImageOrientationPatient by stepping along the slice column.
+    Mirrors BrkRaw resolve() with unwrap_pose=True, expanded to per-slice arrays
+    for DICOM output.
 
-    Args:
-        scan: BrukerScan supplying visu_pars, method, and acqp.
+    Steps per slice pack:
+      1. _resolve_matvec_and_shape — orientation + minimum-projection origin.
+      2. phase flip (ACQ_scaling_phase < 0) — flip_voxel_axis_affine(axis=1):
+         shifts origin by (n_phase-1)*voxel_phase to keep it at the correct
+         physical end of the phase-encode direction.
+      3. coronal flip — flip_voxel_axis_affine(axis=2): reverses slice ordering
+         within coronal packs for consistent anatomical ordering.
+      4. unwrap_to_scanner_xyz — subject-type/position → scanner LPS frame.
+      5. expand to per-slice ImagePositionPatient / ImageOrientationPatient.
 
     Returns:
-        positions:       float64 [total_slices, 3] — ImagePositionPatient per slice.
-        orientations:    float64 [total_slices, 6] — ImageOrientationPatient per slice
-                         (row-direction cosines then column-direction cosines).
-        pack_slices:     slices per pack, e.g. [8] or [4, 4].
-        pack_is_coronal: whether each pack's slice orientation is coronal.
+        positions:       float64 [total_slices, 3] — ImagePositionPatient.
+        orientations:    float64 [total_slices, 6] — ImageOrientationPatient
+                         (row cosines then column cosines).
+        pack_slices:     slices per pack.
+        pack_is_coronal: whether each pack's orientation is coronal.
     """
     vp = scan.visu_pars
     m = scan.method
 
-    n_packs, pack_n_slices, pack_thickness, orient_names = _resolve_slice_pack(m)
-    total_slices = sum(pack_n_slices)
+    n_packs, pack_n_slices, pack_thickness = _resolve_slice_pack(m)
+
+    # BrkRaw contingency: when a single pack reports 1 slice but VisuCoreSize
+    # encodes more (e.g. 3D-encoded acquisitions), trust VisuCoreSize.
+    if n_packs == 1 and pack_n_slices[0] == 1:
+        core_size = np.asarray(vp.get("VisuCoreSize", [1, 1])).ravel()
+        if len(core_size) >= 3 and int(core_size[2]) != 1:
+            pack_n_slices = [int(core_size[2])]
 
     phase_dir = float(np.asarray(scan.acqp.get("ACQ_scaling_phase", 1.0)).ravel()[0])
     flip_phase = phase_dir < 0
 
-    core_size = np.asarray(vp.get("VisuCoreSize", [1, 1])).ravel()
-    n_read = int(core_size[0]) if len(core_size) > 0 else 1
-    n_phase = int(core_size[1]) if len(core_size) > 1 else 1
+    raw_slice_orient = np.asarray(m.get("PVM_SPackArrSliceOrient", ["axial"])).ravel()
 
     subj_type_raw = vp.get("VisuSubjectType", None)
     subj_type = str(subj_type_raw) if subj_type_raw is not None else None
@@ -300,47 +328,38 @@ def bruker_to_lps(
     all_orientations: list[npt.NDArray[np.floating]] = []
     pack_is_coronal: list[bool] = []
 
-    pack_slice_start = 0
     for i in range(n_packs):
-        n_slices_i = pack_n_slices[i]
-        is_coronal = "coronal" in orient_names[i]
+        if n_packs == 1:
+            orient_name = str(raw_slice_orient[0]).lower()
+        else:
+            orient_name = str(raw_slice_orient[min(i, len(raw_slice_orient) - 1)]).lower()
+
+        is_coronal = "coronal" in orient_name
         pack_is_coronal.append(is_coronal)
 
-        affine = _build_pack_affine(
-            vp,
-            spack_idx=i,
-            pack_slice_start=pack_slice_start,
-            pack_n_slices=n_slices_i,
-            pack_thickness=pack_thickness[i],
-            total_slices=total_slices,
-        )
-
-        pack_shape = (n_read, n_phase, n_slices_i)
+        mat, vec, shape = _resolve_matvec_and_shape(vp, i, pack_n_slices, pack_thickness)
+        affine = from_matvec(mat, vec)
 
         if flip_phase:
-            affine = flip_voxel_axis_affine(affine, axis=1, shape=pack_shape)
-        if is_coronal and n_slices_i > 1:
-            affine = flip_voxel_axis_affine(affine, axis=2, shape=pack_shape)
+            affine = flip_voxel_axis_affine(affine, axis=1, shape=shape)
+        if is_coronal and shape[2] > 1:
+            affine = flip_voxel_axis_affine(affine, axis=2, shape=shape)
 
         affine = unwrap_to_scanner_xyz(affine, subj_type, subj_pos)
         affine = np.round(affine, decimals=6)
 
-        # Expand to per-slice: position of slice j = origin + j * slice_step
         slice_step = affine[:3, 2]
         origin = affine[:3, 3]
         row_unit = affine[:3, 0] / np.linalg.norm(affine[:3, 0])
         col_unit = affine[:3, 1] / np.linalg.norm(affine[:3, 1])
         orientation_vec: npt.NDArray[np.floating] = np.concatenate([row_unit, col_unit])
 
-        for j in range(n_slices_i):
+        for j in range(pack_n_slices[i]):
             all_positions.append(origin + j * slice_step)
             all_orientations.append(orientation_vec)
 
-        pack_slice_start += n_slices_i
-
     positions = np.array(all_positions, dtype=float)
     orientations = np.array(all_orientations, dtype=float)
-
     return positions, orientations, pack_n_slices, pack_is_coronal
 
 
@@ -350,33 +369,21 @@ def orient_correction_brkraw(
     pack_slices: list[int] | None = None,
     pack_is_coronal: list[bool] | None = None,
 ) -> npt.NDArray[np.generic]:
-    """Apply pixel-axis corrections that match the voxel flips encoded in bruker_to_lps().
+    """Apply pixel-axis flips that match the affine flips in bruker_to_lps().
 
-    bruker_to_lps() calls flip_voxel_axis_affine() for two cases — phase and
-    coronal — which redefine which voxel is "first" along those axes.  The
-    pixel array must be reordered to stay consistent with the updated metadata.
+    bruker_to_lps() calls flip_voxel_axis_affine() for phase and coronal cases,
+    which shifts the affine origin.  The pixel array must be reordered to match
+    so that voxel (0,0,0) maps to the updated origin.
 
-    unwrap_to_scanner_xyz() (subject-position/type transform) is a pure
-    coordinate-frame conversion and does NOT change voxel ordering, so no
-    pixel flip is applied for it here.
-
-    Args:
-        images:          Float array [x, y, slices, frames].
-        scan:            BrukerScan supplying acqp, method, visu_pars.
-        pack_slices:     Per-pack slice counts from bruker_to_lps().
-        pack_is_coronal: Per-pack coronal flag from bruker_to_lps().
-
-    Returns:
-        Array of the same shape and dtype with axes flipped as required.
+    unwrap_to_scanner_xyz() is a pure coordinate-frame transform and does not
+    change which voxel is first, so no pixel flip is needed for that step.
     """
     result = np.array(images)
 
-    # 1. Phase flip — mirrors flip_voxel_axis_affine(axis=1) in bruker_to_lps()
     phase_scaling = float(np.asarray(scan.acqp.get("ACQ_scaling_phase", 1.0)).ravel()[0])
     if phase_scaling < 0:
         result = np.flip(result, axis=1)
 
-    # 2. Coronal flip — mirrors flip_voxel_axis_affine(axis=2) in bruker_to_lps()
     if pack_slices is not None and pack_is_coronal is not None:
         offset = 0
         for n, is_coronal in zip(pack_slices, pack_is_coronal):

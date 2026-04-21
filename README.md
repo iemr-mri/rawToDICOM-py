@@ -167,7 +167,7 @@ src/
 
 ### dicom/
 
-- `affine.py` — pure affine math translated from [BrkRaw](https://github.com/BrkRaw/brkraw): `from_matvec`, `to_matvec`, `rotate_affine`, `flip_affine`, `flip_voxel_axis_affine`, `unwrap_to_scanner_xyz`, plus `bruker_to_lps` and `orient_correction_brkraw`.
+- `affine.py` — faithful translation of [BrkRaw resolver/affine.py](https://github.com/BrkRaw/brkraw): `from_matvec`, `to_matvec`, `rotate_affine`, `flip_affine`, `flip_voxel_axis_affine`, `unwrap_to_scanner_xyz`, plus `bruker_to_lps` and `orient_correction_brkraw`.
 - `apply_corrections()` — phase-offset pixel shift per slice + int16 normalisation (30 000-count ceiling). Pixel offset is computed from the actual image y-size so it remains accurate after zero-padding.
 - `shuffle_slices()` — reorders from Bruker's interleaved acquisition order to anatomical order. For multi-pack acquisitions, shuffles independently within each pack (each pack is interleaved separately by the scanner).
 - `bruker_to_lps()` — builds `ImagePositionPatient` / `ImageOrientationPatient` for all slices. See below.
@@ -192,7 +192,7 @@ Getting co-registered LAX+SAX geometry right in a DICOM viewer requires both the
    - **Biped** (humans): `flip_y` converts LPS+ → LAS+, plus a Z-rotation for Prone / Left / Right.
    - Foot-first entry applies a 180° Y-rotation before either of the above.
 
-`bruker_to_lps()` returns `(positions, orientations, pack_slices, pack_is_coronal)`. The last two values are threaded into `shuffle_slices()` (per-pack interleave reordering) and `orient_correction_brkraw()` (matching pixel flips) so that pixel data stays consistent with the corrected metadata.
+`bruker_to_lps()` returns `(positions, orientations, pack_slices, pack_is_coronal)`. `pack_slices` is threaded into `shuffle_slices()` for per-pack interleave reordering; both values are passed to `orient_correction_brkraw()` which applies the matching pixel flips so that voxel (0,0,0) maps to the updated affine origin. `orient_correction_brkraw()` is applied after `shuffle_slices()` in `write_dicom_series()`.
 
 ---
 

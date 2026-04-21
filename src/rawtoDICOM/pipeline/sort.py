@@ -22,11 +22,10 @@ from rawtoDICOM.config import PipelineConfig
 
 # Maps match pattern (case-insensitive substring of ACQ_scan_name) → destination
 # folder name under sorted_root.  The first matching pattern wins.
-# "segFLASH_CS" is listed before "FLASH" so it takes priority over the shorter match.
+# "segFLASH_CS" is listed before "CINE" so it takes priority over the shorter match.
 _KEYWORD_FOLDER: dict[str, str] = {
     "segFLASH_CS": "CINE",
     "CINE": "CINE",
-    "FLASH": "FLASH",
     "TPM": "TPM",
     "t1": "t1",
     "MRE": "MRE",

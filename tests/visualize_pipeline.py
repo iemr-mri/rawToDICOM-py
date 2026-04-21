@@ -66,8 +66,7 @@ def to_display(images: npt.NDArray[np.floating], scan_dir: Path) -> npt.NDArray[
     _, _, pack_slices, pack_is_coronal = bruker_to_lps(scan)
     corrected = apply_corrections(images, scan)
     shuffled = shuffle_slices(corrected, pack_slices)
-    result = orient_correction_brkraw(shuffled, scan, pack_slices, pack_is_coronal)
-    return result  # type: ignore[return-value]
+    return orient_correction_brkraw(shuffled, scan, pack_slices, pack_is_coronal)  # type: ignore[return-value]
 
 
 # ---------------------------------------------------------------------------

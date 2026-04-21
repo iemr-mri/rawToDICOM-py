@@ -40,7 +40,7 @@ def write_dicom_series(
       1. apply_corrections        — phase-offset circshift + int16 normalisation.
       2. bruker_to_lps            — position/orientation metadata + pack layout.
       3. shuffle_slices           — Bruker interleaved → anatomical order, per pack.
-      4. orient_correction_brkraw — phase/coronal/subject-position pixel flips.
+      4. orient_correction_brkraw — pixel flips matching bruker_to_lps affine flips.
       5. _write_slice             — pydicom Dataset construction and save_as.
 
     Args:

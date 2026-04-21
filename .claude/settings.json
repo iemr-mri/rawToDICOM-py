@@ -65,7 +65,12 @@
       "Bash(python -m rawtoDICOM --raw-root tests/raw-data --sorted-root tests/sorted-data --dicom-root tests/DICOM-data --project AGORA --cohort cohort1 --skip-sort --force-dicom --species rat)",
       "WebSearch",
       "WebFetch(domain:brkraw.github.io)",
-      "Bash(pytest -x -q)"
+      "Bash(pytest -x -q)",
+      "Bash(mkdir -p \"c:/Users/heskalde/Claude projects/rawToDICOM-py/tests/raw-data/AGORA/self-gated\")",
+      "Bash(mv \"cohort2/AGORA11_M1_s_2026010602_1_3_20260106_104946\" \"cohort2/AGORA2_F3_s_2026010501_1_3_20260105_085052\" \"cohort2/AGORA2_f2_s_2025121704_1_1_20251217_103502\" \"cohort2/AGORA5_F2_s_2026010504_1_2_20260105_115710\" self-gated/)",
+      "Bash(python -m rawtoDICOM --raw-root tests/raw-data --sorted-root tests/sorted-data --dicom-root tests/DICOM-data --project AGORA --cohort cohort2)",
+      "Bash(curl -s \"https://raw.githubusercontent.com/BrkRaw/brkraw/main/src/brkraw/resolver/image.py\")",
+      "Bash(python -m pytest -x -q --ignore=tests/test_self_gating.py)"
     ]
   }
 }
