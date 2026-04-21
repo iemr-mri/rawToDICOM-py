@@ -39,6 +39,7 @@ from rawtoDICOM.reconstruction.kspace import sort_kspace, zero_fill_kspace
 _SUBJECT = (
     Path(__file__).parent
     / "raw-data"
+    / "AGORA"
     / "cohort1"
     / "AGORA2_F1_s_2025121703_1_4_20251217_103442"
 )

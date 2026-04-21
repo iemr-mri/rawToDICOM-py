@@ -50,7 +50,22 @@
       "Bash(pytest tests/test_dicom.py -q)",
       "Bash(python -)",
       "Bash(python -m rawtoDICOM --raw-root tests/raw-data --sorted-root tests/sorted-data --dicom-root tests/DICOM-data --cohort cohort1 --force-dicom)",
-      "Bash(python -m rawtoDICOM --raw-root tests/raw-data --sorted-root tests/sorted-data --dicom-root tests/DICOM-data --project AGORA --cohort cohort1 --force-dicom)"
+      "Bash(python -m rawtoDICOM --raw-root tests/raw-data --sorted-root tests/sorted-data --dicom-root tests/DICOM-data --project AGORA --cohort cohort1 --force-dicom)",
+      "Bash(python -m pytest --tb=short -q)",
+      "Bash(python -m pytest tests/test_pipeline_integration.py::test_process_cine_scan_skip_if_exists --tb=short)",
+      "Bash(python -m pytest tests/ -x -q --ignore=tests/raw-data)",
+      "Bash(python -m rawtoDICOM --raw-root tests/raw-data --sorted-root tests/sorted-data --dicom-root tests/DICOM-data --project AGORA --cohort cohort1 --species rat --force-dicom)",
+      "Bash(python -m pytest -x -q --ignore=tests/raw-data)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:api.github.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(gh api *)",
+      "Bash(curl -s \"https://raw.githubusercontent.com/BrkRaw/brkraw/main/src/brkraw/resolver/affine.py\")",
+      "Bash(python -m pytest tests/ -x -q)",
+      "Bash(python -m rawtoDICOM --raw-root tests/raw-data --sorted-root tests/sorted-data --dicom-root tests/DICOM-data --project AGORA --cohort cohort1 --skip-sort --force-dicom --species rat)",
+      "WebSearch",
+      "WebFetch(domain:brkraw.github.io)",
+      "Bash(pytest -x -q)"
     ]
   }
 }

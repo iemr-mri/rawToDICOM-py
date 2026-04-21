@@ -1,9 +1,9 @@
 """Tests for Phase 4: DICOM geometry corrections and file writing.
 
-Geometry functions (apply_corrections, shuffle_slices, orient_rotation) are
-tested with synthetic arrays and a real BrukerScan for metadata.  The
-write_dicom_series integration test writes to a tmp_path and reads the result
-back with pydicom to verify key DICOM tags.
+Geometry functions (apply_corrections, shuffle_slices) are tested with
+synthetic arrays and a real BrukerScan for metadata.  The write_dicom_series
+integration test writes to a tmp_path and reads the result back with pydicom
+to verify key DICOM tags.
 
 Primary real-data fixture: AGORA2_F1 scan 10 (CINE_LAX4, coronal, L_R read).
 """
@@ -18,12 +18,13 @@ import pytest
 
 from rawtoDICOM.bruker.reader import load_scan
 from rawtoDICOM.bruker.scan import BrukerScan
-from rawtoDICOM.dicom.geometry import apply_corrections, orient_rotation, shuffle_slices
+from rawtoDICOM.dicom.geometry import apply_corrections, shuffle_slices
 from rawtoDICOM.dicom.writer import write_dicom_series
 
 _SUBJECT = (
     Path(__file__).parent
     / "raw-data"
+    / "AGORA"
     / "cohort1"
     / "AGORA2_F1_s_2025121703_1_4_20251217_103442"
 )
@@ -141,55 +142,6 @@ def test_shuffle_slices_preserves_shape() -> None:
     images = np.zeros((16, 16, 6, 20))
     result = shuffle_slices(images)
     assert result.shape == images.shape
-
-
-# ---------------------------------------------------------------------------
-# orient_rotation
-# ---------------------------------------------------------------------------
-
-
-def test_orient_rotation_no_case_match_identity() -> None:
-    """Unknown orientations leave the image unchanged."""
-    scan = _make_scan_with_method({
-        "PVM_SPackArrReadOrient": "UNKNOWN",
-        "PVM_SPackArrSliceOrient": "UNKNOWN",
-    })
-    images = np.arange(24, dtype=float).reshape(4, 6, 1)
-    result = orient_rotation(images, scan)
-    np.testing.assert_array_equal(result, images)
-
-
-def test_orient_rotation_k2_preserves_shape() -> None:
-    """k=2 (180° rotation) preserves the spatial shape."""
-    scan = _make_scan_with_method({
-        "PVM_SPackArrReadOrient": "H_F",
-        "PVM_SPackArrSliceOrient": "coronal",
-    })
-    images = np.random.randn(16, 24, 5)
-    result = orient_rotation(images, scan)
-    assert result.shape == images.shape
-
-
-def test_orient_rotation_k1_swaps_spatial_dims() -> None:
-    """k=1 (90° rotation) swaps x and y dimensions."""
-    scan = _make_scan_with_method({
-        "PVM_SPackArrReadOrient": "L_R",
-        "PVM_SPackArrSliceOrient": "coronal",
-    })
-    images = np.zeros((12, 20, 3))
-    result = orient_rotation(images, scan)
-    assert result.shape == (20, 12, 3)
-
-
-def test_orient_rotation_all_frames_transformed() -> None:
-    """Transformation applies across the frames axis."""
-    scan = _make_scan_with_method({
-        "PVM_SPackArrReadOrient": "H_F",
-        "PVM_SPackArrSliceOrient": "axial",
-    })
-    images = np.random.randn(8, 8, 10)
-    result = orient_rotation(images, scan)
-    assert result.shape[2] == 10  # frames axis untouched
 
 
 # ---------------------------------------------------------------------------

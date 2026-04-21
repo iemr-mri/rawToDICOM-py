@@ -17,6 +17,7 @@ from pydicom.dataset import FileDataset, FileMetaDataset
 from pydicom.uid import UID, ExplicitVRLittleEndian, generate_uid
 
 from rawtoDICOM.bruker.scan import BrukerScan
+from rawtoDICOM.dicom.affine import bruker_to_lps, orient_correction_brkraw
 from rawtoDICOM.dicom.geometry import apply_corrections, shuffle_slices
 
 # DICOM SOP class UID for MR Image Storage
@@ -36,10 +37,11 @@ def write_dicom_series(
     Translates convertToDICOM.m.
 
     Pipeline per call:
-      1. apply_corrections — phase-offset circshift + int16 normalisation.
-      2. shuffle_slices    — Bruker interleaved → anatomical slice order.
-      3. orient_rotation   — per-slice 90° rotation / flip.
-      4. _write_slice      — pydicom Dataset construction and save_as.
+      1. apply_corrections        — phase-offset circshift + int16 normalisation.
+      2. bruker_to_lps            — position/orientation metadata + pack layout.
+      3. shuffle_slices           — Bruker interleaved → anatomical order, per pack.
+      4. orient_correction_brkraw — phase/coronal/subject-position pixel flips.
+      5. _write_slice             — pydicom Dataset construction and save_as.
 
     Args:
         images:      Float magnitude array [x, y, slices, frames].
@@ -59,21 +61,21 @@ def write_dicom_series(
 
     corrected = apply_corrections(images, scan)  # [x, y, slices, frames], int16
 
+    positions_lps, orientations_lps, pack_slices, pack_is_coronal = bruker_to_lps(scan)
+
     n_slices = corrected.shape[2]
     if n_slices > 1:
-        corrected = shuffle_slices(corrected).astype(np.int16)
+        corrected = shuffle_slices(corrected, pack_slices).astype(np.int16)
+
+    corrected = orient_correction_brkraw(
+        corrected, scan, pack_slices, pack_is_coronal
+    ).astype(np.int16)
 
     # --- Metadata extracted once ---
     m = scan.method
     vp = scan.visu_pars
 
     extent = np.asarray(vp.get("VisuCoreExtent", [1.0, 1.0])).ravel()
-    raw_positions = np.asarray(
-        vp.get("VisuCorePosition", np.zeros((n_slices, 3)))
-    ).reshape(-1, 3)
-    raw_orientations = np.asarray(
-        vp.get("VisuCoreOrientation", np.zeros((n_slices, 9)))
-    ).reshape(-1, 9)
 
     patient_id = str(vp.get("VisuSubjectId", "unknown"))
     protocol = str(vp.get("VisuAcquisitionProtocol", ""))
@@ -88,7 +90,7 @@ def write_dicom_series(
     # share one StudyInstanceUID and SeriesInstanceUID — makes LAX + SAX load
     # together in DICOM viewers.
     study_uid = generate_uid(entropy_srcs=[patient_id, "study"])
-    series_uid = generate_uid(entropy_srcs=[patient_id])
+    series_uid = generate_uid(entropy_srcs=[patient_id, str(scan.scan_dir.name)])
     written: list[Path] = []
 
     for slice_idx in range(n_slices):
@@ -98,8 +100,8 @@ def write_dicom_series(
             float(extent[1]) / slice_data.shape[1],
         ]
 
-        position = raw_positions[min(slice_idx, len(raw_positions) - 1)].tolist()
-        orientation = raw_orientations[min(slice_idx, len(raw_orientations) - 1), :6].tolist()
+        position = positions_lps[min(slice_idx, len(positions_lps) - 1)].tolist()
+        orientation = orientations_lps[min(slice_idx, len(orientations_lps) - 1)].tolist()
         slice_loc = float(slice_offsets[min(slice_idx, len(slice_offsets) - 1)])
 
         slice_number = scan_index if scan_index is not None else slice_idx + 1

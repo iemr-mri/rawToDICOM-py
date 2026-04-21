@@ -31,7 +31,8 @@ from rawtoDICOM.reconstruction.self_gating.synchronizer import synchronize_slice
 SG_SUBJECT = (
     Path(__file__).parent
     / "raw-data"
-    / "cohort1"
+    / "AGORA"
+    / "cohort2"
     / "AGORA2_f2_s_2025121704_1_1_20251217_103502"
 )
 SG_SCAN_DIR = SG_SUBJECT / "18"
@@ -104,6 +105,7 @@ def test_is_sg_scan_false_on_regular_cine() -> None:
     regular_dir = (
         Path(__file__).parent
         / "raw-data"
+        / "AGORA"
         / "cohort1"
         / "AGORA2_F1_s_2025121703_1_4_20251217_103442"
         / "10"  # CINE_LAX4 — ECG-gated
@@ -120,7 +122,8 @@ def test_scan_plane_lax() -> None:
     lax_dir = (
         Path(__file__).parent
         / "raw-data"
-        / "cohort1"
+        / "AGORA"
+        / "cohort2"
         / "AGORA2_f2_s_2025121704_1_1_20251217_103502"
         / "7"  # scan named "lax"
     )
@@ -132,6 +135,7 @@ def test_scan_plane_other() -> None:
     other_dir = (
         Path(__file__).parent
         / "raw-data"
+        / "AGORA"
         / "cohort1"
         / "AGORA2_F1_s_2025121703_1_4_20251217_103442"
         / "1"  # 1_localizer

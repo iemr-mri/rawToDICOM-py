@@ -18,7 +18,8 @@ import numpy as np
 import numpy.typing as npt
 
 from rawtoDICOM.bruker.reader import load_scan
-from rawtoDICOM.dicom.geometry import apply_corrections, orient_rotation, shuffle_slices
+from rawtoDICOM.dicom.affine import bruker_to_lps, orient_correction_brkraw
+from rawtoDICOM.dicom.geometry import apply_corrections, shuffle_slices
 from rawtoDICOM.reconstruction.coil_combination import combine_coils
 from rawtoDICOM.reconstruction.compressed_sensing import reconstruct_cs
 from rawtoDICOM.reconstruction.kspace import ifft2c, sort_kspace, zero_fill_kspace
@@ -57,18 +58,15 @@ def reconstruct_scan(scan_dir: Path) -> npt.NDArray[np.floating]:
 
 
 def to_display(images: npt.NDArray[np.floating], scan_dir: Path) -> npt.NDArray[np.int16]:
-    """Apply phase correction, slice shuffle, and orientation rotation.
+    """Apply phase correction, slice shuffle, and BrkRaw pixel corrections.
 
-    Returns int16 array [x, y, slices, frames] in display orientation.
+    Returns int16 array [x, y, slices, frames] consistent with bruker_to_lps metadata.
     """
     scan = load_scan(scan_dir, read_raw=False)
+    _, _, pack_slices, pack_is_coronal = bruker_to_lps(scan)
     corrected = apply_corrections(images, scan)
-    shuffled = shuffle_slices(corrected)
-    n_slices = shuffled.shape[2]
-    rotated_slices = [
-        orient_rotation(shuffled[:, :, s, :], scan) for s in range(n_slices)
-    ]
-    result = np.stack(rotated_slices, axis=2)
+    shuffled = shuffle_slices(corrected, pack_slices)
+    result = orient_correction_brkraw(shuffled, scan, pack_slices, pack_is_coronal)
     return result  # type: ignore[return-value]
 
 
@@ -133,14 +131,12 @@ def build_figure1() -> plt.Figure:
 
 
 def _get_geometry(scan_dir: Path) -> tuple[npt.NDArray[np.floating], npt.NDArray[np.floating], npt.NDArray[np.floating]]:
-    """Return (center_mm, row_dir, col_dir) in scanner space from visu_pars."""
+    """Return (center_mm, row_dir, col_dir) in LPS scanner space via bruker_to_lps."""
     scan = load_scan(scan_dir, read_raw=False)
-    vp = scan.visu_pars
-    orientation = np.asarray(vp["VisuCoreOrientation"]).reshape(-1, 9)
-    position = np.asarray(vp["VisuCorePosition"]).reshape(-1, 3)
-    center = position[0]
-    row_dir = orientation[0, 0:3]
-    col_dir = orientation[0, 3:6]
+    positions, orientations, _, _ = bruker_to_lps(scan)
+    center = positions[0]
+    row_dir = orientations[0, 0:3]
+    col_dir = orientations[0, 3:6]
     return center, row_dir, col_dir
 
 
@@ -206,72 +202,6 @@ def _sax_line_on_lax(
     (i2, j2) = mm_to_pixel(*unique[1])
     return i1, j1, i2, j2
 
-
-def _apply_rotation_to_line(
-    line: tuple[float, float, float, float],
-    nx: int,
-    ny: int,
-    scan_dir: Path,
-) -> tuple[float, float, float, float]:
-    """Apply the same orient_rotation transform to line pixel coordinates.
-
-    orient_rotation performs: rot90(k, axes=(0,1)) then optionally flip(axis=1).
-
-    For a pixel (i, j) in an (nx, ny) image:
-      k=0           : (i,  j)
-      k=1           : (ny-1-j, i)     → result shape (ny, nx)
-      k=2           : (nx-1-i, ny-1-j)
-      k=3           : (j, nx-1-i)     → result shape (ny, nx)
-    Followed by flip axis=1 on the rotated array.
-    """
-    scan = load_scan(scan_dir, read_raw=False)
-    m = scan.method
-    read_orient = str(np.asarray(m["PVM_SPackArrReadOrient"]).ravel()[0]).upper()
-    slice_orient = str(np.asarray(m["PVM_SPackArrSliceOrient"]).ravel()[0]).lower()
-
-    k = 0
-    flip_y = False
-    if "sagittal" in slice_orient:
-        if "H_F" in read_orient:
-            k = 2
-        elif "A_P" in read_orient:
-            k = 1
-            flip_y = True
-    elif "coronal" in slice_orient:
-        if "H_F" in read_orient:
-            k = 2
-        elif "L_R" in read_orient:
-            k = 1
-            flip_y = True
-    elif "axial" in slice_orient:
-        if "A_P" in read_orient:
-            k = 2
-        elif "L_R" in read_orient:
-            k = 1
-            flip_y = True
-
-    i1, j1, i2, j2 = line
-
-    def transform(i: float, j: float) -> tuple[float, float]:
-        if k == 0:
-            ri, rj = i, j
-            flip_size = ny  # rotated shape (nx, ny), axis-1 size = ny
-        elif k == 1:
-            ri, rj = ny - 1 - j, i
-            flip_size = nx  # rotated shape (ny, nx), axis-1 size = nx
-        elif k == 2:
-            ri, rj = nx - 1 - i, ny - 1 - j
-            flip_size = ny  # rotated shape (nx, ny), axis-1 size = ny
-        else:  # k == 3
-            ri, rj = j, nx - 1 - i
-            flip_size = nx  # rotated shape (ny, nx), axis-1 size = nx
-        if flip_y:
-            rj = flip_size - 1 - rj
-        return ri, rj
-
-    r1 = transform(i1, j1)
-    r2 = transform(i2, j2)
-    return r1[0], r1[1], r2[0], r2[1]
 
 
 def _select_visible_sax_slices(
@@ -361,8 +291,7 @@ def build_figure2() -> plt.Figure:
         )
         if line is None:
             continue
-        line_rot = _apply_rotation_to_line(line, lax_nx, lax_ny, LAX4_SCAN_DIR)
-        i1, j1, i2, j2 = line_rot
+        i1, j1, i2, j2 = line
         if scan_dir in selected_dirs:
             label = next(k for k, v in selected.items() if v == scan_dir)
             ax_lax.plot([i1, i2], [j1, j2], color=colors[label], linewidth=2.0,

@@ -112,7 +112,8 @@ src/
     │       ├── shuffler.py            # shuffle_data, ShuffleConfig
     │       └── synchronizer.py        # synchronize_slices
     ├── dicom/
-    │   ├── geometry.py                # apply_corrections, shuffle_slices, orient_rotation
+    │   ├── affine.py                  # from_matvec/to_matvec/rotate_affine/flip_affine/flip_voxel_axis_affine/unwrap_to_scanner_xyz + bruker_to_lps, orient_correction_brkraw
+    │   ├── geometry.py                # apply_corrections, shuffle_slices
     │   └── writer.py                  # write_dicom_series
     └── pipeline/
         ├── sort.py                    # sort_raw_data (replaces sortRawData.m)
@@ -166,11 +167,32 @@ src/
 
 ### dicom/
 
+- `affine.py` — pure affine math translated from [BrkRaw](https://github.com/BrkRaw/brkraw): `from_matvec`, `to_matvec`, `rotate_affine`, `flip_affine`, `flip_voxel_axis_affine`, `unwrap_to_scanner_xyz`, plus `bruker_to_lps` and `orient_correction_brkraw`.
 - `apply_corrections()` — phase-offset pixel shift per slice + int16 normalisation (30 000-count ceiling). Pixel offset is computed from the actual image y-size so it remains accurate after zero-padding.
-- `shuffle_slices()` — reorders from Bruker's interleaved acquisition order to anatomical order.
-- `orient_rotation()` — 2D rotation + optional y-flip via 6-case lookup on read × slice orientation fields. Reliable for standard planes; unreliable for oblique LAX.
-- `orient_rotation_from_visu()` — alternative using `VisuCoreOrientation` vectors; scores all 8 × 90° transforms against a target display convention. More principled for oblique planes.
+- `shuffle_slices()` — reorders from Bruker's interleaved acquisition order to anatomical order. For multi-pack acquisitions, shuffles independently within each pack (each pack is interleaved separately by the scanner).
+- `bruker_to_lps()` — builds `ImagePositionPatient` / `ImageOrientationPatient` for all slices. See below.
 - `write_dicom_series()` — writes one multi-frame DICOM file per slice, named `{scan_label}_slice_{n:03d}.dcm`, mapping `visu_pars` fields to standard tags.
+
+#### Image orientation
+
+Getting co-registered LAX+SAX geometry right in a DICOM viewer requires both the pixel array and the position/orientation metadata to be consistent. The pipeline uses a BrkRaw-style affine approach: correct the metadata, then apply only the matching pixel flips.
+
+**`bruker_to_lps` + `orient_correction_brkraw`** — modelled on [BrkRaw](https://github.com/BrkRaw/brkraw)'s `resolve()`. For each slice pack:
+
+1. **Multi-pack layout** — reads `PVM_NSPacks` / `PVM_SPackArrNSlices` / `PVM_SPackArrSliceDistance` / `PVM_SPackArrSliceGap` to handle acquisitions with more than one slice package. Each pack gets its own 4×4 affine.
+
+2. **Affine construction** — builds the affine from `VisuCoreOrientation` (rotation) and `VisuCoreExtent` / `VisuCoreSize` (voxel resolution). Origin is chosen by minimum-projection: all per-slice positions are projected onto the slice normal and the slice with the smallest projection becomes the affine origin, giving a consistent anatomical ordering regardless of acquisition order.
+
+3. **Phase flip** (`ACQ_scaling_phase < 0`) — `flip_voxel_axis_affine(axis=1)`: negates the column-direction cosines in `ImageOrientationPatient` and shifts the origin by `(n_phase − 1) × voxel_phase`. Matched by `np.flip(axis=1)` in `orient_correction_brkraw`.
+
+4. **Coronal flip** (`PVM_SPackArrSliceOrient == "coronal"`) — `flip_voxel_axis_affine(axis=2)` per coronal pack: reverses the slice-position ordering within that pack. Matched by slice reversal within each coronal pack in `orient_correction_brkraw`.
+
+5. **Subject-type / position transform** (`unwrap_to_scanner_xyz`) — converts Bruker's internal subject-relative frame to scanner LPS. This is a pure coordinate-frame conversion (premultiply by flip/rotation matrix); it does not change which voxel is "first", so no pixel reordering is applied for this step.
+   - **Quadruped** (rodents — this pipeline): `flip_x` converts LSA+ → RSA+, plus a Z-rotation for Supine / Left / Right gravity orientations.
+   - **Biped** (humans): `flip_y` converts LPS+ → LAS+, plus a Z-rotation for Prone / Left / Right.
+   - Foot-first entry applies a 180° Y-rotation before either of the above.
+
+`bruker_to_lps()` returns `(positions, orientations, pack_slices, pack_is_coronal)`. The last two values are threaded into `shuffle_slices()` (per-pack interleave reordering) and `orient_correction_brkraw()` (matching pixel flips) so that pixel data stays consistent with the corrected metadata.
 
 ---
 
